@@ -1,0 +1,106 @@
+const axios = require('axios');
+const User = require('../models/User');
+const Transaction = require('../models/Transaction');
+
+exports.buyData = async (req, res) => {
+  try {
+    const { network, phone, amount, plan } = req.body;
+
+    if (!network || !phone || !amount || !plan) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide all required fields',
+      });
+    }
+
+    const user = await User.findById(req.user.id);
+
+    if (user.wallet < amount) {
+      return res.status(400).json({
+        success: false,
+        message: 'Insufficient wallet balance',
+      });
+    }
+
+    try {
+      const response = await axios.post(
+        `${process.env.VTU_API_URL}/data`,
+        {
+          network,
+          mobile_number: phone,
+          plan,
+        },
+        {
+          headers: {
+            Authorization: `Token ${process.env.VTU_API_KEY}`,
+          },
+        }
+      );
+
+      user.wallet -= amount;
+      await user.save();
+
+      await Transaction.create({
+        userId: user._id,
+        type: 'data',
+        network,
+        phone,
+        amount,
+        status: 'successful',
+        reference: response.data?.reference,
+      });
+
+      res.json({
+        success: true,
+        message: 'Data purchase successful',
+        data: response.data,
+        wallet: user.wallet,
+      });
+    } catch (apiError) {
+      await Transaction.create({
+        userId: user._id,
+        type: 'data',
+        network,
+        phone,
+        amount,
+        status: 'failed',
+      });
+
+      res.status(400).json({
+        success: false,
+        message: 'Data purchase failed. Please try again.',
+        error: apiError.message,
+      });
+    }
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.getDataPlans = async (req, res) => {
+  try {
+    const { network } = req.query;
+
+    const response = await axios.get(
+      `${process.env.VTU_API_URL}/data-plans?network=${network}`,
+      {
+        headers: {
+          Authorization: `Token ${process.env.VTU_API_KEY}`,
+        },
+      }
+    );
+
+    res.json({
+      success: true,
+      plans: response.data,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch data plans',
+    });
+  }
+};
